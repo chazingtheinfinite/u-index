@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1, shrink-to-fit=no"
+/>
+<title>Interactive u-Index Calculator</title>
+
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script src="https://unpkg.com/d3-simple-slider"></script>
+
+<link
+  rel="stylesheet"
+  href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css"
+  integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO"
+  crossorigin="anonymous"
+/>
+
+<div class="container">
+  <center>
+  <h1>Interactive <i>u</i>-Index Interface</h1>
+  <br>
+  <h5>Developed by: Kevin Dick</h5>
+  
+  <br>
+  <hr width="72%" margin-left="auto" margin-right="auto" background-color="#666" opcaity="0.5"> 
+  The interactive <i>u</i>-index interface enables authors to easily experiment with contribution assignment schemes. <br><br>
+   <div style="word-wrap:break-word; width:60%; text-align:left;">
+     The following constraints are placed on the multi-author weights (MAWs):
+     <ul style="list-style-type:circle;">
+        <li>Sum of weights equals 1.</li>
+        <li>Changes in one weight are compensated equally by the weights of all other authors.</li>
+        <li>No weight can be less than 0.001% or exceed 100% - (<i>numAuthors</i> x 0.001%).</li>
+     </ul> 
+
+  </div>
+  <hr width="72%" margin-left="auto" margin-right="auto" background-color="#666" opcaity="0.5">
+  <br>
+  </center>
+  <!-- Add the Author Number Input -->
+  <label for="nAuthors" >
+  Number of Authors = <span id="nAuthors-value"></span>
+  </label>
+  <input type="number" min="0" max="100" step="1" value="5" id="nAuthors">
+  
+  <br><br> 
+  <h5>Multi-Author Weighting Scheme</h5>
+  <input id="scheme-dflt" type="radio" name="maw" value="default" checked="checked"> <i>u</i>: Default <i>u</i>-index<br>
+  <input id="scheme-unif" type="radio" name="maw" value="uniform"> <i>u<sub>0</sub></i>: Uniform Contribution<br>
+  <input id="scheme-symm" type="radio" name="maw" value="symmetric"> <i>u<sub>s</sub></i>: Symmetric <i>u</i>-index<br>
+  <input id="scheme-harm" type="radio" name="maw" value="harmonic"> 1/<i>k</i><sup>th</sup>: Hodge's Harmonic Decay<br>
+
+  <br>
+  <div class="row align-items-center" id="divSliders">
+  <!-- The Sliders are dynamically  rendered within this div...-->
+  </div>
+</div>
+
+
+<script> // Where the magic happens; let the fun begin...
+
+  // Global Variables
+  var globalScheme  = 'default';
+  var globalSliders = [];
+  var globalCurVals = [];
+  var globalMin     = 0.00001;
+  var globalMax     = 1.00000;
+  var verbose       = true;
+
+  function getDefaultMAWs(nAuthors){
+    /* getDefaultMAWs, O(n) space-time
+       Harmonic decay of middle authors;
+       equivalent weight to first and last.
+       Normalized to sum to one.
+       ---
+       Input : int nAuthors, the number of authors
+       Output: [float] maws, see description.
+    */
+    var maws = [];
+    var harmMaws = [];
+    var norm = 0; // track sum of array for normalization
+    for (var i = 1; i < nAuthors; i++){ // i is an order id
+      harmMaws.push(1.0 / i);
+      norm = norm + (1.0 / i);
+    } // for 1,2,...,nAuthors -1
+    harmMaws.push(1.0); // for the last author
+    norm = norm + 1.0;
+    
+    for (var i = 0; i < nAuthors; i++){ //i is an array index
+      maws.push(harmMaws[i] / norm);
+    }
+    return maws;
+  };
+
+  function getUniformMAWs(nAuthors){
+    /* getUniformMAWs, O(n) space-time
+       Assigns equal weight to all 
+       authors.
+       ---
+       Input : int nAuthors, the number of authors
+       Output: [float] maws, 1/nAuthor array of size nAuthor
+    */
+    var maws = [];
+    for (var i = 0; i <= nAuthors; i++) {
+      maws.push(1.0 / nAuthors);
+    };
+    return maws;
+  };
+  
+  function getSymmetricMAWs(nAuthors){
+    /* getSymmetricMAWs, O(n) space-time
+       Assigns linearly decaying and  linearly
+       growing weights mirrored on the center author.
+       ---
+       Input : int nAuthors, the number of authors
+       Output: [float] maws, see description.
+    */
+    var maxDepth  = parseInt(Math.ceil(nAuthors/2.0));
+    var posDepths = [];
+    var aWeights  = [];
+    var maws      = [];
+    var norm      = 0.0;
+
+    // Fill the first half of the array (linealy decreasing)
+    for (var i = 1; i < maxDepth + 1; i++){
+      posDepths.push(i);
+    }
+    
+    // Fill mirrored half, based on odd/even nAuthors
+    if (nAuthors % 2 == 0){
+      for (var i = maxDepth; i > 0; i--){
+        posDepths.push(i);
+      }
+    } else {
+      for (var i = maxDepth - 1; i > 0; i--){
+        posDepths.push(i);
+      }
+    }
+
+    // Establish the authorship weight based on position
+    for (var i = 0; i < nAuthors; i++){
+      var weight = parseFloat(maxDepth - posDepths[i] + 1);
+      aWeights.push(weight);
+      norm = norm + weight;
+    }
+    
+    // Normalize all weights to sum to one
+    for (var i = 0; i < nAuthors; i++){
+      maws.push(aWeights[i] / norm);
+    }
+   
+    return maws;
+  };
+ 
+  function getHarmonicMAWs(nAuthors){
+    /* getHarmonicMAWs, O(n) space-time
+       Harmonic decay of all authors in order.
+       ---
+       Input : int nAuthors, the number of authors
+       Output: [float] maws, 1/k normalized array.
+    */
+    var maws = [];
+    var harmMaws = [];
+    var norm = 0;
+    for (var i = 1; i <= nAuthors; i++){
+      harmMaws.push(1.0 / i);
+      norm = norm + (1.0 / i);
+    }
+    
+    // Normalize the weights to ensure summation to one
+    for (var i = 0; i < nAuthors; i++){
+        maws.push(harmMaws[i] / norm);
+    }
+    
+    return maws;
+  };
+
+  function modifySliders(nAuthors){
+    /* modifySliders
+       Accesses globalScheme to determine the MAW
+       strategy, obtains the MAWs accordingly and
+       generates a new set of sliders applying 
+       those values. Triggered whenever there is
+       a change in number of authors or a change
+       in the MAW strategy.
+       ---
+       Input : nAuthors, number of authors
+       Output: null, side-effect is new set of sliders
+                     and values in the global variables
+    */
+    // check the selected scheme and generate MAWs
+    if (verbose) { console.log("The Scheme is: " + globalScheme); }
+    var maws = [];
+    if (globalScheme == 'default'){
+      if (verbose) { console.log('default'); }
+      maws = getDefaultMAWs(nAuthors);
+    } else if (globalScheme == 'uniform') {
+      if (verbose) { console.log('uniform'); }
+      maws = getUniformMAWs(nAuthors);
+    } else if (globalScheme == 'symmetric') {
+      if (verbose) { console.log('symmetric'); }
+      maws = getSymmetricMAWs(nAuthors);
+    } else { // harmonic
+      if (verbose) { console.log('harmonic'); }
+      maws = getHarmonicMAWs(nAuthors);
+    }
+    if (verbose) { console.log(maws); }
+
+    // First remove existing sliders
+    d3.selectAll(".col-sm-2").remove();
+    d3.selectAll(".col-sm").remove();
+
+    // Re-initialize globalSliders array
+    globalSliders = [];
+    globalCurVals = [];
+
+    d3.select("#divSliders")
+      .each(function(d) {
+
+      for (var i = 1; i <= nAuthors; i++) {     
+        d3.select("#divSliders")
+          .append("div")
+          .attr("class", "col-sm")
+          .append("div")
+	  .attr("width", 120)
+	  .attr("height", 380)
+          .attr("align", "center")
+          .attr("id",function(d) { return 'slider-vertical-'+i;});
+
+	var sliderVertical = d3
+      	  .sliderLeft()
+      	  .min(globalMin)
+      	  .max(globalMax)
+      	  .height(300)
+          .width(100)
+      	  .step(0.00001)
+          .tickFormat(d3.format('.3%'))
+      	  .ticks(5)
+      	  .default(maws[i-1])
+      	  .fill('#031864')
+	  .on('end', val =>  { // avoid 'onchange' due to inftyloopz
+	    updateSliderVals(val, nAuthors);
+    	  });
+	
+        // Append this slider to the global sliders array
+	globalSliders.push(sliderVertical);
+	globalCurVals.push(maws[i-1]);
+
+    	var gVertical = d3
+    	  .select('div#slider-vertical-'+i)
+    	  .append('svg')
+    	  .attr('width', 120)
+    	  .attr('height', 380)
+    	  .append('g')
+    	  .attr('transform', 'translate(90,30)');
+
+    	gVertical.call(sliderVertical);
+	d3.select('div#slider-vertical-'+i)
+          .append('text')
+	  .text('Author ' + i);
+	
+      };
+    })
+  };
+
+  // When the nAuthor changes, recreate sliders 
+  d3.select("#nAuthors").on("input", function() {
+    update(+this.value);
+  });
+
+  // When the radio button changes, recreate the sliders based on the scheme
+  d3.selectAll('input[name="maw"]').on('change', function(d) {
+	globalScheme = this.value;
+	update(d3.select("#nAuthors").node().value);
+  });
+
+
+  // Initial update value 
+  update(5);
+
+  function update(nAuthors) {
+    /* update
+       Recreates the sliders based on the
+       number of authors and reads the global
+       sheme variable to initialize the the
+       correct MAWs.
+    */
+        modifySliders(nAuthors);
+  };
+
+  function fixFloat(toFix) {
+    /* fixFloat
+       Fixes floating decimal precision,
+       float parses, and floors float.
+       ---
+       Input : float toFix, imprecise float
+       Output: float, fixed & floored float
+    */
+    return parseFloat(toFix.toFixed(5));
+  }
+
+  function updateSliderVals(value, nAuthors){
+    /* updateSliderVals
+       Non-descructive updating of the slider values.
+       Determines which slider changed, computes the
+       compensatory correction, and updates other
+       sliders accordingly. Suppresses any modifications
+       that violate the u-index MAW constraints.
+       ---
+       Input : float value, the new slider value
+               int nAuthors, the number of authors
+       Output: null, side-effect is valid updating of 
+                     sliders and global arrays of values.
+    */
+    var ctrlIdx  = -1;
+    var newVals  = [];
+    var toModify = [];
+    var delta    =  0;
+    var corr     =  0;
+    var valid    = true;
+
+    // Do nothing if only one author:
+    if (nAuthors == 1) {
+       globalSliders[0] = globalSliders[0].value(fixFloat(globalCurVals[0]));
+       return
+    }
+
+    for (var i = 0; i < nAuthors; i++){
+      console.log('SliderVal: ' + fixFloat(globalSliders[i].value()) + '   GlobalVal: ' + fixFloat(globalCurVals[i]));
+      if (fixFloat(globalSliders[i].value()) != fixFloat(globalCurVals[i])){
+        ctrlIdx = i;
+      } else {
+        toModify.push(i);
+      }
+    }
+    if (verbose) {
+      console.log('-----------\nCtrlIdx: '+ctrlIdx);
+      console.log(globalCurVals);   
+      console.log(toModify);
+    }
+
+    // Determine size and direction of the change (delta) to compute correction.
+    delta = value - globalCurVals[ctrlIdx];
+    corr  = (-1.0 * delta) / (nAuthors - 1);
+    if (verbose) { console.log('Correction: ' + corr); }
+
+    // Compute the newVals
+    for (var i = 0; i < nAuthors; i++){
+      newVals.push(fixFloat(globalCurVals[i] + corr));
+    }
+    newVals[ctrlIdx] = fixFloat(value);
+
+    if (verbose) { console.log(newVals); }
+    // Verify adherence to constraints
+    var total = 0;
+    for (var i = 0; i < nAuthors; i++){
+       total = total + newVals[i];
+       if (newVals[i] < globalMin) { valid = false; }
+       if (newVals[i] > (globalMax - ((nAuthors - 1) * globalMin))) { valid = false; }
+    }
+    if (total > globalMax + (nAuthors * globalMin)) { valid = false; }
+
+    if (verbose) { console.log(valid); }
+
+    // Apply correction to all sliders only if valid
+    if (valid) {
+       for (var i = 0; i < nAuthors; i++){
+          globalSliders[i] = globalSliders[i].value(fixFloat(newVals[i]));
+          globalCurVals[i] = newVals[i];
+       }
+    } else { // Suppress change to the ctrlIdx slider
+       globalSliders[ctrlIdx] = globalSliders[ctrlIdx].value(fixFloat(globalCurVals[ctrlIdx]));
+    }
+
+    if (verbose) {
+      console.log(newVals);
+      console.log(globalCurVals);
+      console.log('Adjustment Complete!~');
+    }
+  }
+
+</script>
