@@ -326,7 +326,8 @@
     }
 
     for (var i = 0; i < nAuthors; i++){
-      console.log('SliderVal: ' + fixFloat(globalSliders[i].value()) + '   GlobalVal: ' + fixFloat(globalCurVals[i]));
+      if (verbose) { console.log('SliderVal: ' + fixFloat(globalSliders[i].value()) + '   GlobalVal: ' + fixFloat(globalCurVals[i])); }
+
       if (fixFloat(globalSliders[i].value()) != fixFloat(globalCurVals[i])){
         ctrlIdx = i;
       } else {
